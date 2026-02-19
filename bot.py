@@ -25,7 +25,8 @@ async def on_message(message):
     match = re.search(instagramRegex, message.content)
 
     if match:
-        linkNew = link_original.replace("instagram.com", "kkinstagram.com")
+        linkDefault = match.group(1)
+        linkNew = linkDefault.replace("instagram.com", "kkinstagram.com")
             
         try:
             await message.delete()
