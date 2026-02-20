@@ -5,6 +5,9 @@ services:
     restart: unless-stopped
     environment:
       - DISCORD_TOKEN=
+      - USER_ID=
+      - PREFIX=-
+      - COOLDOWN_MEDIA=60
     logging:
       driver: "json-file"
       options:
