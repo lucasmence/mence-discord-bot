@@ -37,6 +37,22 @@ async def on_message(message):
             
         await message.channel.send(content)
 
+    twitterRegex = r"(https?://(?:www\.)?(?:twitter\.com|x\.com)/[a-zA-Z0-9_]+/status/[0-9]+)"
+    match = re.search(twitterRegex, message.content)
+
+    if match:
+        linkDefault = match.group(1)
+        linkNew = linkDefault.replace("x.com", "fxtwitter.com")
+            
+        try:
+            await message.delete()
+        except discord.Forbidden:
+            return
+
+        content = f"[{message.author.display_name}]({linkNew})"
+            
+        await message.channel.send(content)
+
     await bot.process_commands(message)
 
 if token:
