@@ -1,1 +1,6 @@
-discord.py
+discord.py[voice]
+PyNaCl
+ffmpeg-python
+yt-dlp
+pytube2
+requests
