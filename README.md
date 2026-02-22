@@ -1,4 +1,4 @@
-# my-discord-bot
+# mence-discord-bot
 My personal discord bot for a friend private server.
 
 # Install
