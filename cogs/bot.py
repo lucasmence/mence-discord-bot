@@ -2,334 +2,123 @@ import discord
 from discord.ext import commands, tasks
 import os
 import re
-import ffmpeg
-from pytube import YouTube
 import yt_dlp
 import requests
+import asyncio
+from dotenv import load_dotenv
 
-FOLDER_DOWNLOADS = "./downloads"
-token = os.getenv('DISCORD_TOKEN')
-prefix = os.getenv('PREFIX')
-cooldownMediaCommand = os.getenv('COOLDOWN_MEDIA')
-limitFilesizeMb = os.getenv('LIMIT_FILESIZE_MB')
-diskClearMinutes = os.getenv('DISK_CLEAR_MINUTES')
+load_dotenv()
 
-userId = ''
+class BotMedia(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.folder_downloads = "./downloads"
+        
+        cd_media = os.getenv('COOLDOWN_MEDIA', '60')
+        self.cooldown_value = float(cd_media)
+        
+        self.limit_filesize = int(os.getenv('LIMIT_FILESIZE_MB', '200'))
+        self.disk_clear_min = int(os.getenv('DISK_CLEAR_MINUTES', '30'))
+        self.user_id = os.getenv('USER_ID', '') 
 
-shared_cooldown = commands.CooldownMapping.from_cooldown(1, cooldownMediaCommand, commands.BucketType.default)
+        self.shared_cooldown = commands.CooldownMapping.from_cooldown(1, self.cooldown_value, commands.BucketType.default)
+        
+        self.clearDisk.start()
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-intents.presences = True
+    def cog_unload(self):
+        self.clearDisk.cancel()
 
-bot = commands.Bot(command_prefix=prefix, intents=intents)
+    @tasks.loop(minutes=30)
+    async def clearDisk(self):
+        bot_playing = any(vc.is_playing() for vc in self.bot.voice_clients)
+        
+        if not bot_playing and os.path.exists(self.folder_downloads):
+            for file in os.listdir(self.folder_downloads):
+                full_path = os.path.join(self.folder_downloads, file)
+                try:
+                    if os.path.isfile(full_path):
+                        os.remove(full_path)
+                except Exception as e:
+                    print(f"Error deleting {file}: {e}")
 
-@tasks.loop(minutes=diskClearMinutes)
-async def clearDisk():
-    botPlaying = False
-    for vc in bot.voice_clients:
-        if vc.is_playing():
-            botPlaying = True
-            break
-    
-    if not botPlaying:
-        if os.path.exists(FOLDER_DOWNLOADS):
-            files = os.listdir(FOLDER_DOWNLOADS)
-            if files:
-                for file in files:
-                    fullPath = os.path.join(FOLDER_DOWNLOADS, file)
-                    try:
-                        if os.path.isfile(fullPath):
-                            os.remove(fullPath)
-                    except Exception as e:
-                        print(f"Error {file}: {e}")
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        if message.author == self.bot.user:
+            return
 
-@bot.event
-async def on_ready():
-    print(f'Success: {bot.user}')
-    if not clearDisk.is_running():
-        clearDisk.start()
+        content = message.content
+        new_content = None
+        
+        if "instagram.com" in content:
+            new_content = content.replace("instagram.com", "kkinstagram.com")
+        elif "x.com" in content:
+            new_content = content.replace("x.com", "fxtwitter.com")
+        elif "twitter.com" in content:
+            new_content = content.replace("twitter.com", "fxtwitter.com")
 
-@bot.check
-async def verify_present_user(ctx):
-    if userId == '':
+        if new_content:
+            try:
+                await message.delete()
+                await message.channel.send(f"[{message.author.display_name}]({new_content})")
+            except:
+                pass
+
+    async def shared_cooldown_check(self, ctx):
+        bucket = self.shared_cooldown.get_bucket(ctx.message)
+        retry_after = bucket.update_rate_limit()
+        if retry_after:
+            raise commands.CommandOnCooldown(bucket, retry_after, commands.BucketType.default)
         return True
 
-    discordUser = ctx.guild.get_member(userId)  
-    if discordUser is None:
-        return False  
-    
-    return True
-
-async def shared_cooldown_check(ctx):
-    try:
-        await ctx.message.delete()
-    except:
-        pass 
-
-    bucket = shared_cooldown.get_bucket(ctx.message)
-    retry_after = bucket.update_rate_limit()
-    if retry_after:
-        raise commands.CommandOnCooldown(bucket, retry_after, commands.BucketType.default)
-    return True
-
-def deleteFile(path):
-    if os.path.isfile(path):
-        os.remove(path)
-
-def verifyYoutubeFilesize(url, limitMb=200):
-    ydl_opts = {
-        'format': 'worst',
-        'quiet': True,
-        'no_warnings': True,
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-            bytesSize = info.get('filesize') or info.get('filesize_approx')
-
-            if bytesSize:
-                mbSize = bytesSize / (1024 * 1024)
-                if mbSize > limitMb:
+    def verify_yt_filesize(self, url):
+        ydl_opts = {'format': 'worst', 'quiet': True}
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                size = info.get('filesize') or info.get('filesize_approx')
+                if size and (size / (1024 * 1024)) > self.limit_filesize:
                     return False
                 return True
-            
+        except:
             return False
 
-    except Exception as e:
-        return False
+    def upload_litterbox(self, file_path):
+        url = "https://litterbox.catbox.moe/resources/internals/api.php"
+        data = {"reqtype": "fileupload", "time": "1h"}
+        with open(file_path, 'rb') as f:
+            response = requests.post(url, data=data, files={"fileToUpload": f})
+            return response.text if response.status_code == 200 else None
 
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandOnCooldown):
-        time = round(error.retry_after)
-        await ctx.send(f"{ctx.author.mention} ⏳ {time}s")
-    else:
-        print(f"Error: {error}")
+    @commands.command()
+    async def mp3(self, ctx, *, url):
+        if not await self.shared_cooldown_check(ctx): return
+        
+        if not self.verify_yt_filesize(url):
+            return await ctx.send(f"{ctx.author.mention} -> 💩🪠 (Arquivo muito grande)")
 
-def litterbox_upload(filePath):
-    url = "https://litterbox.catbox.moe/resources/internals/api.php"
-    
-    dados = {
-        "reqtype": "fileupload",
-        "time": "1h"
-    }
+        os.makedirs(self.folder_downloads, exist_ok=True)
+        path_output = os.path.join(self.folder_downloads, f'audio_{ctx.author.id}')
+        
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': path_output,
+            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}],
+            'quiet': True
+        }
 
-    try:
-        with open(filePath, 'rb') as f:
-            filesList = {"fileToUpload": f}
-            response = requests.post(url, data=dados, files=filesList)
-            
-            if response.status_code == 200:
-                return response.text
-            else:
-                print(f"Upload error: {response.status_code}")
-                return None
-                
-    except FileNotFoundError:
-        print("File not found.")
-    except Exception as e:
-        print(f"Upload error: {e}")
-
-@bot.command()
-@commands.check(shared_cooldown_check)
-async def mp3(ctx, *, message):
-    try:
-        await ctx.message.delete()
-    except:
-        pass 
-
-    fileSizeBlock = verifyYoutubeFilesize(message)
-    if not fileSizeBlock:
-        await ctx.channel.send(f"{ctx.author.mention} -> 💩🪠")
-        return
-
-    folderOutput = "downloads"
-    os.makedirs(folderOutput, exist_ok=True)
-    
-    pathOutput = os.path.join(folderOutput, 'audiomp3')
-
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': pathOutput, 
-        'quiet': True,
-        'no_warnings': True,
-        'source_address': '0.0.0.0', 
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-    }
-
-    try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([message])
-    except Exception as e:
-        print(f"Download error: {e}")
-        return None
+            ydl.download([url])
 
-    audioPath = "downloads/audiomp3.mp3"
-    downloadUrl = litterbox_upload(audioPath)
-    content = f"{ctx.author.mention} -> [Download Mp3]({downloadUrl})"
-    deleteFile(audioPath)
-    await ctx.channel.send(content)
-    
+        final_path = f"{path_output}.mp3"
+        link = self.upload_litterbox(final_path)
+        await ctx.send(f"{ctx.author.mention} -> [Download Mp3]({link})")
+        if os.path.exists(final_path): os.remove(final_path)
 
-@bot.command()
-@commands.check(shared_cooldown_check)
-async def mp4(ctx, *, message):
-    try:
-        await ctx.message.delete()
-    except:
-        pass 
+    @commands.command()
+    async def stop(self, ctx):
+        vc = discord.utils.get(self.bot.voice_clients, guild=ctx.guild)
+        if vc: vc.stop()
+        await ctx.message.add_reaction("⏹️")
 
-    fileSizeBlock = verifyYoutubeFilesize(message)
-    if not fileSizeBlock:
-        await ctx.channel.send(f"{ctx.author.mention} -> 💩🪠")
-        return
-
-    folderOutput = "downloads"
-    os.makedirs(folderOutput, exist_ok=True)
-    
-    pathOutput = os.path.join(folderOutput, 'video.mp4')
-
-    ydl_opts = {
-        'format': 'worstvideo[ext=mp4]+worstaudio[ext=m4a]/worst[ext=mp4]/worst',
-        'outtmpl': pathOutput, 
-        'quiet': True,
-        'no_warnings': True,
-        'source_address': '0.0.0.0', 
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([message])
-    except Exception as e:
-        print(f"Download error: {e}")
-        return None
-
-    videoPath = "downloads/video.mp4"
-    downloadUrl = litterbox_upload(videoPath)
-    content = f"{ctx.author.mention} -> [Download Mp4]({downloadUrl})"
-    deleteFile(videoPath)
-    await ctx.channel.send(content)
-
-@bot.command()
-@commands.check(shared_cooldown_check)
-async def play(ctx, *, message):
-    try:
-        await ctx.message.delete()
-    except:
-        pass 
-
-    fileSizeBlock = verifyYoutubeFilesize(message)
-    if not fileSizeBlock:
-        await ctx.channel.send(f"{ctx.author.mention} -> 💩🪠")
-        return
-
-    folderOutput = "downloads"
-    os.makedirs(folderOutput, exist_ok=True)
-    
-    pathOutput = os.path.join(folderOutput, 'audio')
-
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': pathOutput, 
-        'quiet': True,
-        'no_warnings': True,
-        'source_address': '0.0.0.0', 
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([message])
-    except Exception as e:
-        print(f"Download error: {e}")
-        return None
-
-    voice_client = discord.utils.get(bot.voice_clients, guild=ctx.guild)
-    
-    if not voice_client:
-        if ctx.author.voice:
-            voice_client = await ctx.author.voice.channel.connect()
-        else:
-            return
-
-    if not voice_client.is_playing():
-        audioPath = "downloads/audio.mp3"
-        audio_source = discord.FFmpegPCMAudio(audioPath)
-        voice_client.play(audio_source, after=lambda e: ctx.send(":+1:"))
-
-@bot.command()
-async def stop(ctx):
-    voice_client = discord.utils.get(bot.voice_clients, guild=ctx.guild)
-    if voice_client and voice_client.is_playing():
-        voice_client.stop()
-    try:
-        await ctx.message.delete()
-    except:
-        pass 
-
-@bot.command()
-async def exit(ctx):
-    voice_client = discord.utils.get(bot.voice_clients, guild=ctx.guild)
-    if voice_client:
-        await voice_client.disconnect()
-    try:
-        await ctx.message.delete()
-    except:
-        pass 
-
-@bot.event
-async def on_message(message):
-    if message.author == bot.user:
-        return
-
-    if message.content.startswith(prefix):
-        await bot.process_commands(message)
-        return
-
-    instagramRegex = r"(https?://(?:www\.)?instagram\.com/(?:p|reels|reel)/([^/?#&]+))"
-    match = re.search(instagramRegex, message.content)
-
-    if match:
-        linkDefault = match.group(1)
-        linkNew = linkDefault.replace("instagram.com", "kkinstagram.com")
-           
-        try:
-            await message.delete()
-        except:
-            return
-
-        content = f"[{message.author.display_name}]({linkNew})"
-        await message.channel.send(content)
-
-    twitterRegex = r"(https?://(?:www\.)?(?:twitter\.com|x\.com)/[a-zA-Z0-9_]+/status/[0-9]+)"
-    match = re.search(twitterRegex, message.content)
-
-    if match:
-        linkDefault = match.group(1)
-        linkNew = linkDefault.replace("x.com", "fxtwitter.com")
-            
-        try:
-            await message.delete()
-        except:
-            return
-
-        content = f"[{message.author.display_name}]({linkNew})"  
-        await message.channel.send(content)
-
-    await bot.process_commands(message)
-
-if token:
-    bot.run(token)
-else:
-    print("Error: DISCORD_TOKEN not found!")
+async def setup(bot):
+    await bot.add_cog(BotMedia(bot))

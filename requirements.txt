@@ -4,3 +4,4 @@ ffmpeg-python
 yt-dlp
 pytube2
 requests
+dotenv
