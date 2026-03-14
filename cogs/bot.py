@@ -15,14 +15,11 @@ class BotMedia(commands.Cog):
         self.folder_downloads = "./downloads"
         
         cd_media = os.getenv('COOLDOWN_MEDIA', '60')
-        self.cooldown_value = float(cd_media)
         
+        self.cooldown_value = float(cd_media)
         self.limit_filesize = int(os.getenv('LIMIT_FILESIZE_MB', '200'))
         self.disk_clear_min = int(os.getenv('DISK_CLEAR_MINUTES', '30'))
-        self.user_id = os.getenv('USER_ID', '') 
-
         self.shared_cooldown = commands.CooldownMapping.from_cooldown(1, self.cooldown_value, commands.BucketType.default)
-        
         self.clearDisk.start()
 
     def cog_unload(self):

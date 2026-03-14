@@ -13,14 +13,14 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix=PREFIXO, intents=intents)
 
 async def load_extensions():
-    print("--- Carregando Módulos ---")
+    print("--- Loading modules ---")
     for filename in os.listdir('./cogs'):
         if filename.endswith('.py'):
             try:
                 await bot.load_extension(f'cogs.{filename[:-3]}')
-                print(f'✅ {filename} carregado com sucesso.')
+                print(f'✅ {filename} loaded successfully.')
             except Exception as e:
-                print(f'❌ Erro ao carregar {filename}: {e}')
+                print(f'❌ Error loading {filename}: {e}')
     print("--------------------------")
 
 async def main():
@@ -32,4 +32,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Bot desligado.")
+        print("Bot shutdown.")
